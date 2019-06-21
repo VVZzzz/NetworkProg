@@ -6,6 +6,7 @@
 
 #include <MSWSock.h>
 #include <WinSock2.h>
+#include <list>
 #pragma comment(lib, "ws2_32.lib")
 
 //缓冲区为8K
@@ -14,6 +15,8 @@
 #define DEFAULT_SERVER_PORT 3000
 //一个核上开启2个线程用来处理I/O
 #define THREADS_PERPROCESSOR 2
+//同时投递Accept请求的数量(据情况设置)
+#define MAX_POST_ACCEPT 10
 
 //在完成端口上投递的I/O操作类型
 typedef enum _OPERATION_TYPE {
@@ -26,11 +29,11 @@ typedef enum _OPERATION_TYPE {
 //单IO数据
 typedef struct _PERIODATA {
   OVERLAPPED
-      m_Overlapped;  //重叠IO,必须是第一个成员.且每个socket都有自己的overlapped
+  m_Overlapped;				  // 重叠IO,必须是第一个成员.且每个socket都有自己的overlapped
   SOCKET m_Sock;              // Socket
   WSABUF m_Wsabuf;            // WSABUF缓冲区
   char m_szbuf[MAX_BUF_LEN];  // WSABUF中buf成员具体指针指向
-  OPERATION_TYPE m_Optype;    //具体操作类型
+  OPERATION_TYPE m_Optype;    // 具体操作类型
 
   _PERIODATA() {
     memset(&m_Overlapped, 0, sizeof(m_Overlapped));
@@ -52,6 +55,8 @@ typedef struct _PERIODATA {
 typedef struct _PERSOCKDATA {
   SOCKET m_Sock;
   struct sockaddr_in m_ClientAddr;
+  std::list<PERIODATA*> m_ListPerIO;  //给这个socket上投递的请求(用链表储存)
+
   _PERSOCKDATA() {
     m_Sock = INVALID_SOCKET;
     memset(&m_ClientAddr, 0, sizeof(m_ClientAddr));
@@ -61,6 +66,20 @@ typedef struct _PERSOCKDATA {
       closesocket(m_Sock);
       m_Sock = INVALID_SOCKET;
     }
+	//释放请求
+    for (auto pperiodata : m_ListPerIO) delete pperiodata;
+    m_ListPerIO.clear();
+  }
+  //添加一个新请求,并返回该请求
+  PERIODATA* GetNewRequest() {
+    PERIODATA* newRequest = new PERIODATA;
+    m_ListPerIO.emplace_back(newRequest);
+    return newRequest;
+  }
+  //删除某个特定请求
+  void RemoveSpecificRequest(PERIODATA* pRequest) {
+    for (auto itr = m_ListPerIO.begin(); itr != m_ListPerIO.end(); itr++)
+      if (*itr == pRequest) m_ListPerIO.erase(itr);
   }
 } PERSOCKDATA, *LPPERSOCKDATA;
 class CIOCP;
@@ -95,6 +114,9 @@ class CIOCP {
   void _CleanUP();
   void _ShowMessage(const CString strFmt, ...) const;
   bool _InitIOCompletionPort();
+  bool _InitListenSocket();
+  //投递Accept请求
+  bool _PostAccept(PERIODATA* pAcceptIOData);
 
  private:
  private:
@@ -103,7 +125,11 @@ class CIOCP {
   CString m_strServerIP;  //服务器端IP
   CDialogEx* m_pMainDlg;  //主界面指针
 
-  HANDLE* m_phThreads;         //线程句柄数组
-  HANDLE m_hShutDownEvent;     //退出事件
-  HANDLE m_hIOCompletionPort;  //完成端口对象
+  HANDLE* m_phThreads;					//线程句柄数组
+  HANDLE m_hShutDownEvent;				//退出事件
+  HANDLE m_hIOCompletionPort;			//完成端口对象
+  LPPERSOCKDATA m_pListenSockinfo;		//监听sock信息
+
+  LPFN_ACCEPTEX m_lpfnAcceptEx;			//AcceptEx函数指针
+  LPFN_GETACCEPTEXSOCKADDRS m_lpfnGetAcceptExSockAddrs;
 };
