@@ -17,6 +17,8 @@
 #define THREADS_PERPROCESSOR 2
 //同时投递Accept请求的数量(据情况设置)
 #define MAX_POST_ACCEPT 10
+//传递给工作线程的退出标志
+#define EXIT_CODE NULL
 
 //在完成端口上投递的I/O操作类型
 typedef enum _OPERATION_TYPE {
@@ -48,6 +50,11 @@ typedef struct _PERIODATA {
       closesocket(m_Sock);
       m_Sock = INVALID_SOCKET;
     }
+  }
+
+  //清空buffer
+  void ResetBuf() {
+  memset(m_szbuf, 0, MAX_BUF_LEN);
   }
 } PERIODATA, *LPPERIODATA;
 
@@ -115,10 +122,25 @@ class CIOCP {
   void _ShowMessage(const CString strFmt, ...) const;
   bool _InitIOCompletionPort();
   bool _InitListenSocket();
+
   //投递Accept请求
   bool _PostAccept(PERIODATA* pAcceptIOData);
+  //投递Recv请求
+  bool _PostRecv(PERIODATA* pAcceptIOData);
+
+  //删除某个客户端socket的所有IO请求frome ClientListinfo
+  void _ClearClientListInfo(PERSOCKDATA* pSockInfo);
+  //删除所有客户端socket的所有IO请求frome ClientListinfo
+  void _ClearALLClientListInfo();
+  //向ClientListinfo 添加客户端socket信息
+  void _AddClientListInfo(PERSOCKDATA* pSockInfo);
+
+  //处理Accept请求
+  bool _DoAccept(PERSOCKDATA* pSockInfo, PERIODATA* pIOInfo);
 
  private:
+  //线程函数,专门处理IO请求的线程
+  static DWORD WINAPI _WorkerThreadFunc(LPVOID lpParam);
  private:
   int m_nPort;            //端口
   int m_nThreads;         //开启线程数
@@ -132,4 +154,7 @@ class CIOCP {
 
   LPFN_ACCEPTEX m_lpfnAcceptEx;			//AcceptEx函数指针
   LPFN_GETACCEPTEXSOCKADDRS m_lpfnGetAcceptExSockAddrs;
+
+  std::list<PERSOCKDATA*> m_listClientSockinfo;  //客户端的sock信息链表(始终要更新维护)
+  CRITICAL_SECTION m_csClientInfoList;           //上面这个信息链表的临界区(避免多线程竞争)
 };

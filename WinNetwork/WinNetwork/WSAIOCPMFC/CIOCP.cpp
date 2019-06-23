@@ -15,6 +15,10 @@ CIOCP::CIOCP()
 CIOCP::~CIOCP() {}
 
 bool CIOCP::Start() {
+
+  //初始化临界区对象(线程互斥访问ClientInfoList)
+  InitializeCriticalSection(&m_csClientInfoList);
+
   //退出event为手动重置初始状态为no-signaled
   m_hShutDownEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
 
@@ -57,6 +61,9 @@ bool CIOCP::LoadSocketLib() {
 }
 
 void CIOCP::_CleanUP() {
+  //释放临界区对象
+  DeleteCriticalSection(&m_csClientInfoList);
+  
   //关闭退出事件
   if (m_hShutDownEvent != NULL) CloseHandle(m_hShutDownEvent);
 
@@ -66,6 +73,7 @@ void CIOCP::_CleanUP() {
     delete[] m_phThreads;
     m_phThreads = NULL;
   }
+
 }
 
 void CIOCP::_ShowMessage(const CString strFmt, ...) const {
@@ -172,6 +180,16 @@ bool CIOCP::_InitListenSocket() {
   }
 
   // step6. 投递AcceptEx请求
+  for (int i = 0; i < MAX_POST_ACCEPT; i++) {
+	  //添加一个AcceptEx请求
+    PERIODATA *pperiodata = m_pListenSockinfo->GetNewRequest();
+	//投递AcceptEx请求
+    if (false == _PostAccept(pperiodata)) {
+      m_pListenSockinfo->RemoveSpecificRequest(pperiodata);
+    }
+  }
+
+  return true;
 }
 
 bool CIOCP::_PostAccept(PERIODATA *pAcceptIOData) { 
@@ -213,4 +231,150 @@ bool CIOCP::_PostAccept(PERIODATA *pAcceptIOData) {
 
 
   return true;
+}
+
+bool CIOCP::_PostRecv(PERIODATA *pAcceptIOData) { 
+	
+}
+
+void CIOCP::_ClearClientListInfo(PERSOCKDATA *pSockInfo) {
+  EnterCriticalSection(&m_csClientInfoList);
+  for (auto itr = m_listClientSockinfo.begin();
+       itr != m_listClientSockinfo.end(); itr++) {
+    if (*itr == pSockInfo) {
+      if (pSockInfo != NULL) delete pSockInfo;
+      pSockInfo = NULL;
+      m_listClientSockinfo.erase(itr);
+      break;
+    }
+  }
+  LeaveCriticalSection(&m_csClientInfoList);
+	
+}
+
+void CIOCP::_ClearALLClientListInfo() {
+  EnterCriticalSection(&m_csClientInfoList);
+  for (auto itr = m_listClientSockinfo.begin();
+       itr != m_listClientSockinfo.end(); itr++) {
+    if (*itr != NULL) delete *itr;
+    *itr = NULL;
+  }
+  m_listClientSockinfo.clear();
+  LeaveCriticalSection(&m_csClientInfoList);
+}
+
+void CIOCP::_AddClientListInfo(PERSOCKDATA *pSockInfo) {
+  EnterCriticalSection(&m_csClientInfoList);
+  m_listClientSockinfo.push_back(pSockInfo);
+  LeaveCriticalSection(&m_csClientInfoList);
+}
+
+bool CIOCP::_DoAccept(PERSOCKDATA *pSockInfo, PERIODATA *pIOInfo) {
+	//首先明确pSockInfo是listenSocket,pIOInfo是携带客户端socketIO信息
+  struct sockaddr_in *localAddr = NULL;
+  struct sockaddr_in *clientAddr = NULL;
+  int localAddrLen = sizeof(SOCKADDR_IN), clientAddrLen = localAddrLen;
+	//1. 取得连入客户端的地址信息(使用GetAcceptExSockAddrs函数)
+  this->m_lpfnGetAcceptExSockAddrs(
+      pIOInfo->m_Wsabuf.buf,
+      pIOInfo->m_Wsabuf.len - ((sizeof(SOCKADDR_IN) + 16) * 2),
+      sizeof(SOCKADDR_IN) + 16, sizeof(SOCKADDR_IN) + 16,
+      (LPSOCKADDR *)&localAddr, &localAddrLen, (LPSOCKADDR *)&clientAddr,
+      &clientAddrLen);
+
+  char strclientAddr[30];
+  inet_pton(AF_INET, strclientAddr, &clientAddr->sin_addr);
+  this->_ShowMessage("客户端 %s:%d已连入.", strclientAddr,
+                     htons(clientAddr->sin_port));
+  this->_ShowMessage("客户端 %s:%d 信息: ", strclientAddr,
+                     htons(clientAddr->sin_port));
+
+  //2. 传入的pSockInfo是listensocket,pIOInfo携带客户端的信息.
+  //   所以我们需要在创建一个PERSOCKINFO,这个SOCKINFO是客户端的,然后将这个ACCEPTSOCK绑定到完成端口.
+  //   这样做的目的是通过完成端口对这个ACCEPTSOCK投递recv请求,进而收到消息.
+  //   即listensocket只负责accept请求,而客户端(accept socket)socket负责recv和send请求
+
+  //创建客户端的SOCKINFO,用来绑定完成端口
+  PERSOCKDATA *pClientSockInfo = new PERSOCKDATA;
+  pClientSockInfo->m_Sock = pIOInfo->m_Sock;
+  memcpy_s(&pClientSockInfo->m_ClientAddr, sizeof(SOCKADDR_IN), clientAddr,
+           sizeof(SOCKADDR_IN));
+
+  //绑定完成端口
+  if (NULL == CreateIoCompletionPort((HANDLE)pClientSockInfo->m_Sock,
+                                     m_hIOCompletionPort,
+                                     (DWORD)pClientSockInfo, 0)) {
+    this->_ShowMessage("执行CreateCreateIoCompletionPort错误,错误代码:%d",
+                       GetLastError());
+    return false;
+  }
+
+  //3. 在这个ClientSockInfo投递recv请求,以便有数据来时处理.
+  //   故创建一个PERIO请求
+  PERIODATA *pperiodata = pClientSockInfo->GetNewRequest();
+  pperiodata->m_Sock = pClientSockInfo->m_Sock;
+  pperiodata->m_Optype = RECV_POSTED;
+  //如果要保存之前原本的buffer,则memcpy
+  //pperiodata->m_szbuf;
+  
+  //投递recv请求
+
+}
+	
+
+DWORD __stdcall CIOCP::_WorkerThreadFunc(LPVOID lpParam) { 
+  WORKTHREADPARAMS *lpWorkThreadPara = (WORKTHREADPARAMS *)lpParam;
+  CIOCP *piocp = lpWorkThreadPara->m_iocp;
+  int nThreadID = lpWorkThreadPara->m_nThreadID;
+
+  piocp->_ShowMessage("IO工作线程启动,线程 ID: %d", nThreadID);
+
+  OVERLAPPED *lpoverlapped = NULL;
+  PERSOCKDATA *lppersockdata = NULL;
+  DWORD dwTransferdBytes = 0;
+
+  while (WAIT_OBJECT_0 != WaitForSingleObject(piocp->m_hShutDownEvent, 0)) {
+    BOOL bReturn = GetQueuedCompletionStatus(
+        piocp->m_hIOCompletionPort, &dwTransferdBytes, (PULONG_PTR)lppersockdata,
+        &lpoverlapped, INFINITE);
+	//传给工作线程是退出标志
+    if (EXIT_CODE == lppersockdata) {
+      break;
+    }
+    if (!bReturn) {  //出错
+      DWORD dwErrno = GetLastError();
+	  //todo: 处理这个Erro
+    } else {
+		//拿到传过来的IO请求数据
+      PERIODATA *pperiodata =
+          CONTAINING_RECORD(lpoverlapped, PERIODATA, m_Overlapped);
+	  //即send recv 传输字节为0,说明对方已关闭连接
+      if (0 == dwTransferdBytes && (RECV_POSTED == pperiodata->m_Optype ||
+                                    SEND_POSTED == pperiodata->m_Optype)) {
+		  
+		  piocp->_ShowMessage("客户端: %s %d 已关闭连接!",
+                            inet_ntoa(lppersockdata->m_ClientAddr.sin_addr),
+                            ntohs(lppersockdata->m_ClientAddr.sin_port));
+		  //删除这个客户端socket from ClientInfoList
+          piocp->_ClearClientListInfo(lppersockdata);
+      } else {  
+		  switch (pperiodata->m_Optype) {
+          case ACCEPT_POSTED:
+            piocp->_DoAccept(lppersockdata,pperiodata);
+            break;
+          case RECV_POSTED:
+            piocp->_DoRecv();
+            break;
+          case SEND_POSTED:
+            piocp->_DoSend();
+			  break;
+          default:
+            TRACE(_T("_WorkThreadFunc中的m_Optype出错"));
+            break;
+        }
+
+      }
+    }
+  }
+  
 }
