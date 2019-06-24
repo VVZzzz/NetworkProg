@@ -86,7 +86,10 @@ typedef struct _PERSOCKDATA {
   //删除某个特定请求
   void RemoveSpecificRequest(PERIODATA* pRequest) {
     for (auto itr = m_ListPerIO.begin(); itr != m_ListPerIO.end(); itr++)
-      if (*itr == pRequest) m_ListPerIO.erase(itr);
+      if (*itr == pRequest) {
+        m_ListPerIO.erase(itr);
+        break;
+      }
   }
 } PERSOCKDATA, *LPPERSOCKDATA;
 class CIOCP;
@@ -115,7 +118,7 @@ class CIOCP {
   //设置端口
   void SetPort(int nport) { m_nPort = nport; }
   //获取IP地址
-  CString GetLocalIP() const { return m_strServerIP; }
+  CString GetLocalIP();
 
  private:
   void _CleanUP();
@@ -137,6 +140,8 @@ class CIOCP {
 
   //处理Accept请求
   bool _DoAccept(PERSOCKDATA* pSockInfo, PERIODATA* pIOInfo);
+  //处理Recv请求
+  bool _DoRecv(PERSOCKDATA* pSockInfo, PERIODATA* pIOInfo);
 
  private:
   //线程函数,专门处理IO请求的线程
@@ -155,6 +160,6 @@ class CIOCP {
   LPFN_ACCEPTEX m_lpfnAcceptEx;			//AcceptEx函数指针
   LPFN_GETACCEPTEXSOCKADDRS m_lpfnGetAcceptExSockAddrs;
 
-  std::list<PERSOCKDATA*> m_listClientSockinfo;  //客户端的sock信息链表(始终要更新维护)
+  std::list<PERSOCKDATA*> m_listClientSockinfo;  //客户端的sock信息链表(始终要更新维护,只保存客户端sock不保存listensock)
   CRITICAL_SECTION m_csClientInfoList;           //上面这个信息链表的临界区(避免多线程竞争)
 };

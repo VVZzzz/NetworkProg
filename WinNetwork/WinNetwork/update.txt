@@ -1,0 +1,7 @@
+1. 添加客户端"CLOSE_POSTED"请求,即当客户端关闭连接时候,应该将此客户端从listClientInfo链表中删除.(原本就有0.0)
+
+note:
+1. 如果使用AcceptEx投递请求,当客户端只连接时,GetQueueCompletionStatus是不会返回的,只有再发送第一次信息时,才返回进行响应.
+2. 已连接的客户端信息即ClientSockInfo,它的List<PERIODATA *>始终只有一个RECV的IO请求.
+3. 对于监听ListenSockInfo,它的List<PERIODATA *>保存要前十个连接的ACCEPT请求.即一直是首先过来的是个Accept请求.
+4. 后面每来一个客户端,都将它与完成端口绑定.并添加到listClientInfo链表中
