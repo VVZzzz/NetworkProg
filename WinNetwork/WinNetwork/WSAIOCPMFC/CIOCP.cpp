@@ -25,7 +25,6 @@ bool CIOCP::Start() {
   if (false == _InitIOCompletionPort()) {
     _ShowMessage(_T("初始化完成端口对象失败! 错误代码:%d!\n"),
                  WSAGetLastError());
-    _CleanUP();
     return false;
   } else {
     _ShowMessage(_T("初始化完成端口对象成功!\n"));
@@ -35,7 +34,6 @@ bool CIOCP::Start() {
   if (false == _InitListenSocket()) {
     _ShowMessage(_T("初始化listen socket失败! 错误代码:%d!\n"),
                  WSAGetLastError());
-    _CleanUP();
     return false;
   } else {
     _ShowMessage(_T("开启listen socket成功!\n"));
@@ -46,7 +44,7 @@ bool CIOCP::Start() {
 }
 
 void CIOCP::Stop() {
-  if (m_hShutDownEvent != NULL) {
+  if (m_hShutDownEvent != NULL && m_phThreads!=NULL) {
     // signal退出事件,注意在workthread中的WaitSingleObject(m_hShutDownEvent)
     //目的是下面,我唤醒nThreads个线程,理应每一线程都会被postqueue一次,但有可能有的线程被唤醒但是没有退出
     //而是继续while循环,继续挂起在GetQueue处,这样就相当于它一个线程拿了两次postqueue
@@ -87,11 +85,11 @@ CString CIOCP::GetLocalIP() {
   gethostname(hostname, MAX_PATH);
   struct hostent *lpHostEnt = gethostbyname(hostname);
   if (NULL == lpHostEnt) return DEFAULT_SERVER_IP;
-  LPSTR lpAddr = lpHostEnt->h_addr_list[2];
+  LPSTR lpAddr = lpHostEnt->h_addr_list[1];
   struct in_addr inAddr;
   memmove(&inAddr, lpAddr, sizeof(in_addr));
   char ipAddr[30];
-  inet_ntop(AF_INET,&inAddr,ipAddr,30);
+  inet_ntop(AF_INET, &inAddr, ipAddr, 30);
   m_strServerIP = CString(ipAddr);
   return m_strServerIP;
 }
@@ -104,7 +102,9 @@ void CIOCP::_CleanUP() {
   if (m_hShutDownEvent != NULL) CloseHandle(m_hShutDownEvent);
 
   //关闭线程句柄
-  for (size_t i = 0; i < m_nThreads; i++) CloseHandle(m_phThreads[i]);
+  for (size_t i = 0; i < m_nThreads; i++) {
+    if (NULL != m_phThreads[i] && INVALID_HANDLE_VALUE != m_phThreads[i]) CloseHandle(m_phThreads[i]);
+  }
   if (m_phThreads != NULL) {
     delete[] m_phThreads;
     m_phThreads = NULL;
@@ -144,13 +144,13 @@ bool CIOCP::_InitIOCompletionPort() {
   SYSTEM_INFO sysInfo;
   GetSystemInfo(&sysInfo);
   m_nThreads = THREADS_PERPROCESSOR * sysInfo.dwNumberOfProcessors;
-  m_phThreads = new HANDLE[m_nThreads];
+  m_phThreads = (HANDLE *)new HANDLE[m_nThreads];
 
   for (int i = 0; i < m_nThreads; i++) {
     WORKTHREADPARAMS *lpParams = new WORKTHREADPARAMS;
     lpParams->m_iocp = this;
     lpParams->m_nThreadID = i + 1;
-    CreateThread(NULL, 0, _WorkerThreadFunc, (LPVOID)lpParams, 0, NULL);
+    m_phThreads[i] = CreateThread(NULL, 0, _WorkerThreadFunc, (LPVOID)lpParams, 0, NULL);
   }
 
   TRACE(_T("建立 _WorkerThread %d 个.\n"), m_nThreads);
@@ -392,12 +392,44 @@ bool CIOCP::_DoRecv(PERSOCKDATA *pSockInfo, PERIODATA *pIOInfo) {
   //首先明确pSockInfo是listenSocket,pIOInfo是携带客户端socketIO信息
   struct sockaddr_in *clientAddr = &pSockInfo->m_ClientAddr;
   char strClientAddr[30] = {0};
-  inet_ntop(AF_INET, &clientAddr->sin_addr, strClientAddr,30);
+  inet_ntop(AF_INET, &clientAddr->sin_addr, strClientAddr, 30);
   this->_ShowMessage(_T("收到客户端 %s : %d 发来信息 %s"), strClientAddr,
                      ntohs(clientAddr->sin_port), pIOInfo->m_szbuf);
   pIOInfo->ResetBuf();
   //再次投递下一个Recv请求
   return _PostRecv(pIOInfo);
+}
+
+bool CIOCP::_IsSocketLive(SOCKET sock) {
+	int nByteSent=send(sock,"",0,0);
+	if (-1 == nByteSent) return false;
+	return true;
+}
+
+bool CIOCP::_HandleError(PERSOCKDATA *pSockInfo, DWORD dwErrno) {
+  switch (dwErrno) {
+	  //如果是超时
+    case WAIT_TIMEOUT:
+      if (_IsSocketLive(pSockInfo->m_Sock)) {
+        this->_ShowMessage("检测到客户端异常退出!");
+        //从维护的ClientInfoList中删除这个客户端
+        this->_ClearClientListInfo(pSockInfo);
+        return true;
+      } else {
+        this->_ShowMessage("网络超时,重试中...");
+        return true;
+      }
+      //如果是客户端异常
+    case ERROR_NETNAME_DELETED:
+      this->_ShowMessage("检测到客户端异常退出!");
+      //从维护的ClientInfoList中删除这个客户端
+      this->_ClearClientListInfo(pSockInfo);
+      return true;
+      // IOCP模型出错,线程退出
+    default:
+      this->_ShowMessage("完成端口操作失败,线程退出!");
+      return false;
+  }
 }
 
 DWORD __stdcall CIOCP::_WorkerThreadFunc(LPVOID lpParam) {
@@ -422,7 +454,10 @@ DWORD __stdcall CIOCP::_WorkerThreadFunc(LPVOID lpParam) {
     }
     if (!bReturn) {  //出错
       DWORD dwErrno = GetLastError();
-      // todo: 处理这个Erro
+      if (!(piocp->_HandleError(lppersockdata, dwErrno))) {
+		  break;
+      }
+	  continue;
     } else {
       //拿到传过来的IO请求数据
       PERIODATA *pperiodata =

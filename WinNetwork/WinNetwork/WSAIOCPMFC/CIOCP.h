@@ -143,6 +143,13 @@ class CIOCP {
   //处理Recv请求
   bool _DoRecv(PERSOCKDATA* pSockInfo, PERIODATA* pIOInfo);
 
+  //检查客户端是否还活着,如果客户端网络断开(拔掉网线,客户端崩溃等),服务端是无法知道客户端断开连接的
+  //此时对无效的socket投递WSARecv操作等会有错
+  //检测方法为服务端向客户端发送数据,查看返回值
+  bool _IsSocketLive(SOCKET sock);
+  //处理一些常见的错误
+  bool _HandleError(PERSOCKDATA* pSockInfo, DWORD dwErrno);
+
  private:
   //线程函数,专门处理IO请求的线程
   static DWORD WINAPI _WorkerThreadFunc(LPVOID lpParam);
