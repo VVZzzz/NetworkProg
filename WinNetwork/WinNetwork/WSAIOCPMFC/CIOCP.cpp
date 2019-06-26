@@ -293,6 +293,25 @@ bool CIOCP::_PostRecv(PERIODATA *pAcceptIOData) {
   return true;
 }
 
+bool CIOCP::_PostSend(PERIODATA *pAcceptIOData) {
+  // pperiodata里存放的是上次收到的数据
+  const char *strToClient = " [from server.]\n";
+  //-1目的是消除\n
+  int cpyPos = strlen(pAcceptIOData->m_szbuf) - 1;
+  if (cpyPos < 0) cpyPos = 0;
+  memmove(pAcceptIOData->m_szbuf + cpyPos, strToClient, strlen(strToClient));
+  //投递Send请求
+  DWORD dwBytes = 0;
+  int nRes = 0;
+  nRes = WSASend(pAcceptIOData->m_Sock, &pAcceptIOData->m_Wsabuf, 1, &dwBytes,
+                 0, &pAcceptIOData->m_Overlapped, NULL);
+  if (SOCKET_ERROR == nRes && WSA_IO_PENDING != WSAGetLastError()) {
+    this->_ShowMessage(_T("投递Recv请求失败!"));
+    return false;
+  }
+  return true;
+}
+
 void CIOCP::_ClearClientListInfo(PERSOCKDATA *pSockInfo) {
   EnterCriticalSection(&m_csClientInfoList);
   for (auto itr = m_listClientSockinfo.begin();
@@ -395,8 +414,16 @@ bool CIOCP::_DoRecv(PERSOCKDATA *pSockInfo, PERIODATA *pIOInfo) {
   inet_ntop(AF_INET, &clientAddr->sin_addr, strClientAddr, 30);
   this->_ShowMessage(_T("收到客户端 %s : %d 发来信息 %s"), strClientAddr,
                      ntohs(clientAddr->sin_port), pIOInfo->m_szbuf);
+  //投递Send请求
+  //pIOInfo->ResetBuf();此处不进行清空,Send要使用数据
+  pIOInfo->m_Optype = SEND_POSTED;
+  return _PostSend(pIOInfo);
+}
+
+bool CIOCP::_DoSend(PERSOCKDATA *pSockInfo, PERIODATA *pIOInfo) {
+  // do noting
   pIOInfo->ResetBuf();
-  //再次投递下一个Recv请求
+  pIOInfo->m_Optype = RECV_POSTED;
   return _PostRecv(pIOInfo);
 }
 
@@ -482,7 +509,7 @@ DWORD __stdcall CIOCP::_WorkerThreadFunc(LPVOID lpParam) {
             piocp->_DoRecv(lppersockdata, pperiodata);
             break;
           case SEND_POSTED:
-            // piocp->_DoSend();
+            piocp->_DoSend(lppersockdata, pperiodata);
             break;
           default:
             //不应执行到此处

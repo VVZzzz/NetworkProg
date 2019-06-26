@@ -130,6 +130,8 @@ class CIOCP {
   bool _PostAccept(PERIODATA* pAcceptIOData);
   //投递Recv请求
   bool _PostRecv(PERIODATA* pAcceptIOData);
+  //投递Send请求
+  bool _PostSend(PERIODATA* pAcceptIOData);
 
   //删除某个客户端socket的所有IO请求frome ClientListinfo
   void _ClearClientListInfo(PERSOCKDATA* pSockInfo);
@@ -142,6 +144,8 @@ class CIOCP {
   bool _DoAccept(PERSOCKDATA* pSockInfo, PERIODATA* pIOInfo);
   //处理Recv请求
   bool _DoRecv(PERSOCKDATA* pSockInfo, PERIODATA* pIOInfo);
+  //处理Send请求
+  bool _DoSend(PERSOCKDATA* pSockInfo, PERIODATA* pIOInfo);
 
   //检查客户端是否还活着,如果客户端网络断开(拔掉网线,客户端崩溃等),服务端是无法知道客户端断开连接的
   //此时对无效的socket投递WSARecv操作等会有错

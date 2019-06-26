@@ -121,7 +121,7 @@ unsigned WINAPI EchoThreadMain(LPVOID pCompletionPortIO) {
     //如果CP对象和socket还没有建立联系或者没有数据传输,该线程函数会挂起不占用CPU时间片.
     //如果有数据传输,则返回
     GetQueuedCompletionStatus((HANDLE)hComPort, &bytesTrans,
-                              (LPDWORD)&handleInfo, (LPOVERLAPPED *)&ioInfo,
+                              (PULONG_PTR)&handleInfo, (LPOVERLAPPED *)&ioInfo,
                               INFINITE);
     sock = handleInfo->hClientSock;
     if (ioInfo->rwMode == READ) {
