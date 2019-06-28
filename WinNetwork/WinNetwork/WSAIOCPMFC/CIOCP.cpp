@@ -286,6 +286,7 @@ bool CIOCP::_PostRecv(PERIODATA *pAcceptIOData) {
   //同样并不真正执行Recv,投递Recv请求
   nResult = WSARecv(pAcceptIOData->m_Sock, &pAcceptIOData->m_Wsabuf, 1,
                     &dwRecvBytes, &dwFlags, &pAcceptIOData->m_Overlapped, NULL);
+  int t = WSAGetLastError();
   if (SOCKET_ERROR == nResult && WSA_IO_PENDING != WSAGetLastError()) {
     this->_ShowMessage(_T("投递Recv请求失败!"));
     return false;
@@ -296,10 +297,13 @@ bool CIOCP::_PostRecv(PERIODATA *pAcceptIOData) {
 bool CIOCP::_PostSend(PERIODATA *pAcceptIOData) {
   // pperiodata里存放的是上次收到的数据
   const char *strToClient = " [from server.]\n";
-  //-1目的是消除\n
-  int cpyPos = strlen(pAcceptIOData->m_szbuf) - 1;
-  if (cpyPos < 0) cpyPos = 0;
-  memmove(pAcceptIOData->m_szbuf + cpyPos, strToClient, strlen(strToClient));
+  //如果接收到的数据已经装满szbuf,就不再添加[from server.]了
+  if (strlen(pAcceptIOData->m_szbuf) + strlen(strToClient) + 1 < MAX_BUF_LEN) {
+    //-1目的是消除\n
+    int cpyPos = strlen(pAcceptIOData->m_szbuf) - 1;
+    if (cpyPos < 0) cpyPos = 0;
+    memmove(pAcceptIOData->m_szbuf + cpyPos, strToClient, strlen(strToClient));
+  }
   //投递Send请求
   DWORD dwBytes = 0;
   int nRes = 0;
@@ -471,7 +475,8 @@ DWORD __stdcall CIOCP::_WorkerThreadFunc(LPVOID lpParam) {
   DWORD dwTransferdBytes = 0;
 
   while (WAIT_OBJECT_0 != WaitForSingleObject(piocp->m_hShutDownEvent, 0)) {
-    //如果没有请求消息,线程会挂起到此处(故stop时,要用PostQueuedCompletionStatus唤醒)
+    //如果IO操作没有完成(即send和recv没有将数据发送或接收完)
+	//线程会挂起到此处(故stop时,要用PostQueuedCompletionStatus唤醒)
     BOOL bReturn = GetQueuedCompletionStatus(
         piocp->m_hIOCompletionPort, &dwTransferdBytes,
         (PULONG_PTR)&lppersockdata, &lpoverlapped, INFINITE);
@@ -486,7 +491,7 @@ DWORD __stdcall CIOCP::_WorkerThreadFunc(LPVOID lpParam) {
       }
 	  continue;
     } else {
-      //拿到传过来的IO请求数据
+      //拿到传过来的已完成的IO数据
       PERIODATA *pperiodata =
           CONTAINING_RECORD(lpoverlapped, PERIODATA, m_Overlapped);
       //即send recv 传输字节为0,说明对方已关闭连接

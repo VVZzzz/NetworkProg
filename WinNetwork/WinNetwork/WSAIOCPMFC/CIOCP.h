@@ -126,6 +126,10 @@ class CIOCP {
   bool _InitIOCompletionPort();
   bool _InitListenSocket();
 
+  //注意这里的请求,这个说法是比如我调用了AcceptEx WSASend或者WSARecv
+  //可能由于要收发的数据很多,但是WSASend/Recv由于异步立即返回,那么我们何时知道它收发完毕了呢?
+  //就要使用GetQueuedCompletionStatus,如果收发完毕则这个函数返回,仍在进行中就挂起.
+  //所以才有"请求"这个说法,因为在"请求"中,调用WSASend后,IO操作不一定完成.故叫"请求"
   //投递Accept请求
   bool _PostAccept(PERIODATA* pAcceptIOData);
   //投递Recv请求
@@ -140,11 +144,13 @@ class CIOCP {
   //向ClientListinfo 添加客户端socket信息
   void _AddClientListInfo(PERSOCKDATA* pSockInfo);
 
-  //处理Accept请求
+  //这三个函数都是做一些IO操作完成后的后续处理
+  //处理Accept请求(实际上是Accpet完成之后要做的后事)
+  //此处统一为在WSASend或者WSARecv返回后,都认为是IO尚未完成.
   bool _DoAccept(PERSOCKDATA* pSockInfo, PERIODATA* pIOInfo);
-  //处理Recv请求
+  //处理Recv请求(实际上是Recv完成之后要做的后事)
   bool _DoRecv(PERSOCKDATA* pSockInfo, PERIODATA* pIOInfo);
-  //处理Send请求
+  //处理Send请求(实际上是Send完成之后要做的后事)
   bool _DoSend(PERSOCKDATA* pSockInfo, PERIODATA* pIOInfo);
 
   //检查客户端是否还活着,如果客户端网络断开(拔掉网线,客户端崩溃等),服务端是无法知道客户端断开连接的
