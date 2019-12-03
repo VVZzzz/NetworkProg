@@ -26,7 +26,7 @@ int main(int argc, char **argv) {
   }
 
   //复用地址和端口号
-  int on = 1;
+  int on = 1;//设置选项标志置位(不为0则置位)
   setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, (char *)&on, sizeof(on));
   setsockopt(listenfd, SOL_SOCKET, SO_REUSEPORT, (char *)&on, sizeof(on));
 
@@ -61,6 +61,9 @@ int main(int argc, char **argv) {
   int n;
   while (true) {
     exist_invalid_fd = false;
+	  //1.>0 设置一段超时时间
+	  //2.=0 立即返回,即轮询
+	  //3.INFTIM 阻塞等待,直到有就绪的fd
     n = poll(&fds[0], fds.size(), 1000);
     if (n < 0) {
       //信号中断

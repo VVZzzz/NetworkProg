@@ -65,6 +65,10 @@ int main(int argc, char **argv) {
   //等待3000ms
   int timeout = 3000;
   //在3s时间内改clientfd仍不可写,则connect error
+  //最后一个timeout参数有3种可能取值:
+  //1.>0 设置一段超时时间
+  //2.=0 立即返回,即轮询
+  //3.INFTIM 阻塞等待,直到有就绪的fd
   if (poll(&cilentw, 1, timeout) != 1) {
     close(clientfd);
     std::cout << "[poll] connect error." << std::endl;

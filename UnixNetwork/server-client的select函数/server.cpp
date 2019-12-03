@@ -7,7 +7,7 @@
 #include <unistd.h>
 #include <iostream>
 #include <stdio.h>
-#include <stirng.h>
+#include <string.h>
 #include <vector>
 
 int main(int argc,char **argv) {
@@ -57,6 +57,10 @@ int main(int argc,char **argv) {
         tm.tv_sec=1;
         tm.tv_usec=0;
         //检测可读socket,select会更改fd_set中fd状态以指示
+		//最后一个参数有3中可能取值:
+		//1. NULL : 阻塞等待,直到有fd就绪
+		//2.tv_sec,tv_usec=0,立即返回(即为轮询)
+		//3.>0 , 设置一段超时时间.
         int ret = select(maxfd+1,&readset,NULL,NULL,&tm);
 
         if (ret == -1)
