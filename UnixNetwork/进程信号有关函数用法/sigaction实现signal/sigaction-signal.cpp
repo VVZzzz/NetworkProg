@@ -1,6 +1,8 @@
 /*
 用sigaction实现signal(大多数unix系统都是这样实现的)
 为了不使用老的不可靠信号语义的signal
+signal函数对于SIGALRM信号不设置自动重启标志
+对于其他信号设置自动重启标志
 */
 #include <errno.h>
 #include <setjmp.h>
